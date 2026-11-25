@@ -1,12 +1,11 @@
 "use client";
 
 import { Shield, Users, X } from "lucide-react";
-import type { PresenceUserState } from "@/types/chat";
-import type { Profile } from "@/types/database";
+import type { MemberWithCommunityRole, PresenceUserState } from "@/types/chat";
 import { UserAvatar } from "./UserAvatar";
 
 interface MemberSidebarProps {
-  members: Profile[];
+  members: MemberWithCommunityRole[];
   onlineUsers: Record<string, PresenceUserState>;
   currentUserId: string;
   onCloseMobile?: () => void;
@@ -58,6 +57,10 @@ export function MemberSidebar({
               {onlineMembers.map((member) => {
                 const presence = onlineUsers[member.id];
                 const isMe = member.id === currentUserId;
+                const roleLabel = member.communityRole?.name;
+                const isOwnerOrMod =
+                  member.communityRole?.slug === "owner" ||
+                  member.communityRole?.slug === "moderator";
 
                 return (
                   <li
@@ -82,7 +85,9 @@ export function MemberSidebar({
                           @{member.username}
                         </span>
                         {member.role === "ADMIN" && (
-                          <Shield className="h-3 w-3 shrink-0 text-amber-300" />
+                          <span title="Admin Sistem">
+                            <Shield className="h-3 w-3 shrink-0 text-amber-300" />
+                          </span>
                         )}
                         {isMe && (
                           <span className="text-[10px] font-medium text-[#8ea1e1]">
@@ -90,6 +95,18 @@ export function MemberSidebar({
                           </span>
                         )}
                       </div>
+
+                      {roleLabel && (
+                        <p
+                          className={`truncate text-[10px] font-semibold ${
+                            isOwnerOrMod
+                              ? "text-[#c7d0ff]"
+                              : "text-[#949ba4]"
+                          }`}
+                        >
+                          {roleLabel}
+                        </p>
+                      )}
 
                       {presence?.vibe && (
                         <p className="truncate text-[11px] text-[#b5bac1]">
@@ -142,6 +159,11 @@ export function MemberSidebar({
                         <Shield className="h-3 w-3 shrink-0 text-amber-300/70" />
                       )}
                     </div>
+                    {member.communityRole?.name && (
+                      <p className="truncate text-[10px] text-[#949ba4]">
+                        {member.communityRole.name}
+                      </p>
+                    )}
                   </div>
                 </li>
               ))}

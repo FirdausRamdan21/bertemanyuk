@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { CheckCircle2, Eye, EyeOff, Loader2, UserPlus } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import { isValidUsername, normalizeUsername } from "@/lib/validation";
+import { registerAction, type AuthActionState } from "@/app/auth/actions";
 import { OAuthButtons } from "./OAuthButtons";
 import { SetupNotice } from "./SetupNotice";
 
@@ -14,82 +12,21 @@ interface RegisterFormProps {
 }
 
 export function RegisterForm({ isConfigured }: RegisterFormProps) {
-  const router = useRouter();
+  const [state, formAction, isPending] = useActionState<
+    AuthActionState,
+    FormData
+  >(registerAction, { error: null });
+
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
+  const [oauthError, setOauthError] = useState("");
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!isConfigured || isLoading) {
-      return;
-    }
+  const displayedError = oauthError || state.error;
 
-    setErrorMessage("");
-    const normalizedUsername = normalizeUsername(username);
-
-    if (!isValidUsername(normalizedUsername)) {
-      setErrorMessage(
-        "Username harus 3–24 karakter dan hanya boleh berisi huruf kecil, angka, atau underscore (_).",
-      );
-      return;
-    }
-
-    if (password.length < 6) {
-      setErrorMessage("Kata sandi minimal 6 karakter.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setErrorMessage("Konfirmasi kata sandi tidak cocok.");
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            username: normalizedUsername,
-          },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-
-      if (error) {
-        setErrorMessage(error.message);
-        setIsLoading(false);
-        return;
-      }
-
-      if (data.session) {
-        router.push("/chat");
-        router.refresh();
-        return;
-      }
-
-      setNeedsEmailVerification(true);
-      setIsLoading(false);
-    } catch (err) {
-      setErrorMessage(
-        err instanceof Error
-          ? err.message
-          : "Terjadi kesalahan saat mendaftar.",
-      );
-      setIsLoading(false);
-    }
-  }
-
-  if (needsEmailVerification) {
+  if (state.needsEmailVerification) {
     return (
       <div className="space-y-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-center">
         <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" />
@@ -99,9 +36,12 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
           </h2>
           <p className="text-sm leading-relaxed text-[#b5bac1]">
             Tautan verifikasi telah dikirim ke{" "}
-            <span className="font-semibold text-[#f2f3f5]">{email.trim()}</span>
-            . Klik tautan tersebut untuk mengaktifkan akun dan masuk ke ruang
-            chat.
+            <span className="font-semibold text-[#f2f3f5]">
+              {state.submittedEmail ?? email.trim()}
+            </span>
+            . Klik tautan tersebut untuk mengaktifkan akun, atau matikan opsi{" "}
+            <strong className="text-[#f2f3f5]">Confirm email</strong> di
+            Supabase Auth agar demo bisa langsung masuk tanpa verifikasi email.
           </p>
         </div>
         <Link
@@ -118,16 +58,16 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
     <div className="space-y-5">
       {!isConfigured && <SetupNotice />}
 
-      {errorMessage && (
+      {displayedError && (
         <div
           role="alert"
-          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-200"
+          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-sm leading-relaxed text-rose-200"
         >
-          {errorMessage}
+          {displayedError}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form action={formAction} className="space-y-4">
         <div className="space-y-1.5">
           <label
             htmlFor="register-username"
@@ -137,10 +77,11 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
           </label>
           <input
             id="register-username"
+            name="username"
             type="text"
             autoComplete="username"
             required
-            disabled={!isConfigured || isLoading}
+            disabled={!isConfigured || isPending}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder="misal: firdaus_dev"
@@ -160,10 +101,11 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
           </label>
           <input
             id="register-email"
+            name="email"
             type="email"
             autoComplete="email"
             required
-            disabled={!isConfigured || isLoading}
+            disabled={!isConfigured || isPending}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="nama@email.com"
@@ -181,11 +123,12 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
           <div className="relative">
             <input
               id="register-password"
+              name="password"
               type={showPassword ? "text" : "password"}
               autoComplete="new-password"
               required
               minLength={6}
-              disabled={!isConfigured || isLoading}
+              disabled={!isConfigured || isPending}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Minimal 6 karakter"
@@ -219,11 +162,12 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
           </label>
           <input
             id="register-confirm-password"
+            name="confirmPassword"
             type={showPassword ? "text" : "password"}
             autoComplete="new-password"
             required
             minLength={6}
-            disabled={!isConfigured || isLoading}
+            disabled={!isConfigured || isPending}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Ulangi kata sandi"
@@ -233,15 +177,15 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
 
         <button
           type="submit"
-          disabled={!isConfigured || isLoading}
+          disabled={!isConfigured || isPending}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#5865f2] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#4752c4] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isLoading ? (
+          {isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <UserPlus className="h-4 w-4" />
           )}
-          <span>{isLoading ? "Mendaftarkan..." : "Buat Akun"}</span>
+          <span>{isPending ? "Mendaftarkan..." : "Buat Akun"}</span>
         </button>
       </form>
 
@@ -253,7 +197,7 @@ export function RegisterForm({ isConfigured }: RegisterFormProps) {
         <div className="flex-grow border-t border-white/10" />
       </div>
 
-      <OAuthButtons isConfigured={isConfigured} onError={setErrorMessage} />
+      <OAuthButtons isConfigured={isConfigured} onError={setOauthError} />
 
       <p className="text-center text-sm text-[#b5bac1]">
         Sudah punya akun?{" "}

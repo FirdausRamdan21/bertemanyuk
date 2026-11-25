@@ -13,26 +13,35 @@ import {
   AlertTriangle,
   AlignJustify,
   ArrowDown,
+  ArrowLeft,
   Award,
   Bookmark,
   Check,
   Code2,
   FileDown,
+  FolderKanban,
   Hash,
+  Info,
   Link2,
   Loader2,
   Menu,
   MessageSquare,
+  Mic,
   Radio,
   RefreshCw,
   Rows3,
   Search,
+  Settings2,
   Users,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
 import { loadChannelMessages } from "@/lib/chat-queries";
+import {
+  loadCommunityWorkspaceData,
+  loadUserCommunities,
+} from "@/lib/community-queries";
 import { hasMessageCode, hasMessageLink } from "@/lib/message-format";
 import { playNotificationPing } from "@/lib/sound";
 import { createClient } from "@/lib/supabase/client";
@@ -40,6 +49,7 @@ import type {
   ActiveTyper,
   ChatInitialData,
   ChatMessage,
+  MemberWithCommunityRole,
   MessageFilterType,
   PresenceUserState,
   RealtimeConnectionStatus,
@@ -48,20 +58,30 @@ import type {
 } from "@/types/chat";
 import type {
   Channel,
+  Community,
+  CommunityRole,
+  Database,
   Message,
   MessageHighlight,
   Poll,
   PollOption,
   PollVote,
   Profile,
+  RoomType,
 } from "@/types/database";
 import { ActiveChannelViewers } from "./ActiveChannelViewers";
 import { ChannelSidebar } from "./ChannelSidebar";
+import { CollectionView } from "./CollectionView";
+import { CommunityRail } from "./CommunityRail";
+import { CommunityRolesModal } from "./CommunityRolesModal";
 import { MemberSidebar } from "./MemberSidebar";
 import { MessageComposer } from "./MessageComposer";
 import { MessageItem, type ChatDensity } from "./MessageItem";
 import { ProfileModal } from "./ProfileModal";
+import { RoomInfoPanel } from "./RoomInfoPanel";
+import { RoomSettingsModal } from "./RoomSettingsModal";
 import { TypingIndicator } from "./TypingIndicator";
+import { UserAvatar } from "./UserAvatar";
 
 function normalizePollOptions(raw: unknown): PollOption[] {
   if (!Array.isArray(raw)) {
@@ -118,6 +138,10 @@ function getStoredDensity(): ChatDensity {
 export function ChatWorkspace({
   currentUser,
   userEmail,
+  v2Ready: initialV2Ready,
+  communities: initialCommunities,
+  initialCommunityId,
+  initialCommunityRoles,
   channels: initialChannels,
   members: initialMembers,
   initialChannelId,
@@ -126,8 +150,20 @@ export function ChatWorkspace({
 }: ChatInitialData) {
   const supabase = useMemo(() => createClient(), []);
 
+  // State v2.0 Komunitas & Peran
+  const [v2Ready, setV2Ready] = useState<boolean>(initialV2Ready);
+  const [communities, setCommunities] =
+    useState<Community[]>(initialCommunities);
+  const [activeCommunityId, setActiveCommunityId] = useState<string | null>(
+    initialCommunityId,
+  );
+  const [communityRoles, setCommunityRoles] = useState<CommunityRole[]>(
+    initialCommunityRoles,
+  );
+
   const [channels, setChannels] = useState<Channel[]>(initialChannels);
-  const [members, setMembers] = useState<Profile[]>(initialMembers);
+  const [members, setMembers] =
+    useState<MemberWithCommunityRole[]>(initialMembers);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(
     initialChannelId,
   );
@@ -174,20 +210,28 @@ export function ChatWorkspace({
 
   const [showLeftDrawer, setShowLeftDrawer] = useState(false);
   const [showRightDrawer, setShowRightDrawer] = useState(false);
-  const [showDesktopMembers, setShowDesktopMembers] = useState(true);
+  const [rightPanelMode, setRightPanelMode] = useState<
+    "members" | "info" | "none"
+  >("members");
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showRolesModal, setShowRolesModal] = useState(false);
+  const [showRoomSettingsModal, setShowRoomSettingsModal] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const roomChannelRef = useRef<RealtimeChannel | null>(null);
   const isNearBottomRef = useRef<boolean>(true);
 
-  // Refs agar callback Realtime selalu membaca state terbaru tanpa re-subscribe
+  const activeCommunityIdRef = useRef<string | null>(activeCommunityId);
   const activeChannelIdRef = useRef<string | null>(activeChannelId);
-  const membersRef = useRef<Profile[]>(members);
+  const membersRef = useRef<MemberWithCommunityRole[]>(members);
   const messagesRef = useRef<ChatMessage[]>(messages);
   const soundMutedRef = useRef<boolean>(soundMuted);
   const currentVibeRef = useRef<string | null>(currentVibe);
+
+  useEffect(() => {
+    activeCommunityIdRef.current = activeCommunityId;
+  }, [activeCommunityId]);
 
   useEffect(() => {
     activeChannelIdRef.current = activeChannelId;
@@ -209,12 +253,34 @@ export function ChatWorkspace({
     currentVibeRef.current = currentVibe;
   }, [currentVibe]);
 
+  const activeCommunity = useMemo(
+    () => communities.find((c) => c.id === activeCommunityId) ?? null,
+    [communities, activeCommunityId],
+  );
+
+  const currentCommunityRole = useMemo(() => {
+    const me = members.find((m) => m.id === currentUser.id);
+    return me?.communityRole ?? null;
+  }, [members, currentUser.id]);
+
   const activeChannel = useMemo(
     () => channels.find((c) => c.id === activeChannelId) ?? null,
     [channels, activeChannelId],
   );
 
-  // Daftar anggota lain yang sedang membuka channel aktif yang sama
+  const activeRoomType: RoomType = activeChannel?.room_type ?? "chat";
+
+  // Hitung jumlah pengguna per ruang (Presence) untuk badge Ruang Suara & header
+  const roomViewerCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const user of Object.values(onlineUsers)) {
+      if (user.activeChannelId) {
+        counts[user.activeChannelId] = (counts[user.activeChannelId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }, [onlineUsers]);
+
   const activeChannelViewers = useMemo(() => {
     if (!activeChannelId) {
       return [];
@@ -273,9 +339,10 @@ export function ChatWorkspace({
     });
   }, [messages, activeFilter, searchQuery]);
 
-  // Smart Auto-Scroll: hanya scroll otomatis saat pengguna sudah berada di bagian bawah
+  // Smart Auto-Scroll
   useEffect(() => {
     if (
+      activeRoomType === "chat" &&
       activeFilter === "all" &&
       !searchQuery.trim() &&
       !focusedMessageId &&
@@ -284,6 +351,7 @@ export function ChatWorkspace({
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [
+    activeRoomType,
     activeChannelId,
     messages.length,
     activeFilter,
@@ -291,7 +359,7 @@ export function ChatWorkspace({
     focusedMessageId,
   ]);
 
-  // Bersihkan indikator mengetik otomatis setelah 2,5 detik tanpa sinyal lanjutan
+  // Bersihkan indikator mengetik otomatis setelah 2,5 detik
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = Date.now();
@@ -304,7 +372,6 @@ export function ChatWorkspace({
     return () => window.clearInterval(timer);
   }, []);
 
-  // Pastikan profil penulis tersedia walau pengguna baru mendaftar setelah sesi dibuka
   const resolveAuthorProfile = useCallback(
     async (userId: string): Promise<Profile | null> => {
       const existing = membersRef.current.find((m) => m.id === userId);
@@ -323,7 +390,7 @@ export function ChatWorkspace({
           if (prev.some((m) => m.id === data.id)) {
             return prev;
           }
-          return [...prev, data].sort((a, b) =>
+          return [...prev, { ...data, communityRole: null }].sort((a, b) =>
             a.username.localeCompare(b.username),
           );
         });
@@ -334,7 +401,7 @@ export function ChatWorkspace({
     [supabase],
   );
 
-  // 1. SUPABASE REALTIME: Presence (Online/Offline + Vibe + Active Channel) & Broadcast (Smart Typing)
+  // 1. SUPABASE REALTIME: Presence & Broadcast
   useEffect(() => {
     const roomChannel = supabase.channel("bertemanyuk:room", {
       config: {
@@ -406,7 +473,6 @@ export function ChatWorkspace({
     };
   }, [supabase, currentUser.id, currentUser.username, currentUser.avatar_url]);
 
-  // Sinkronkan perubahan channel aktif & Vibe ke Presence tanpa memutus koneksi
   useEffect(() => {
     const roomChannel = roomChannelRef.current;
     if (!roomChannel || realtimeStatus !== "connected") {
@@ -430,7 +496,7 @@ export function ChatWorkspace({
     currentUser.avatar_url,
   ]);
 
-  // 2. SUPABASE REALTIME: Postgres Changes (Messages, Channels, Highlights, Polls, Poll Votes)
+  // 2. SUPABASE REALTIME: Postgres Changes
   useEffect(() => {
     const dbChannel = supabase
       .channel("bertemanyuk:db-sync")
@@ -512,8 +578,13 @@ export function ChatWorkspace({
         "postgres_changes",
         { event: "*", schema: "public", table: "channels" },
         (payload) => {
+          const activeComm = activeCommunityIdRef.current;
+
           if (payload.eventType === "INSERT") {
             const created = payload.new as Channel;
+            if (activeComm && created.community_id !== activeComm) {
+              return;
+            }
             setChannels((prev) => {
               if (prev.some((c) => c.id === created.id)) {
                 return prev;
@@ -524,6 +595,9 @@ export function ChatWorkspace({
             });
           } else if (payload.eventType === "UPDATE") {
             const updated = payload.new as Channel;
+            if (activeComm && updated.community_id !== activeComm) {
+              return;
+            }
             setChannels((prev) =>
               prev
                 .map((c) => (c.id === updated.id ? updated : c))
@@ -652,7 +726,10 @@ export function ChatWorkspace({
     };
   }, [supabase, currentUser.id, resolveAuthorProfile]);
 
-  async function fetchChannelData(channelId: string) {
+  async function fetchChannelData(
+    channelId: string,
+    memberList: MemberWithCommunityRole[] = membersRef.current,
+  ) {
     setIsLoadingMessages(true);
     setStatusError("");
     try {
@@ -660,7 +737,7 @@ export function ChatWorkspace({
         supabase,
         channelId,
         currentUser.id,
-        membersRef.current,
+        memberList,
       );
 
       if (result.error) {
@@ -676,6 +753,215 @@ export function ChatWorkspace({
     } finally {
       setIsLoadingMessages(false);
     }
+  }
+
+  async function switchCommunity(communityId: string) {
+    setIsLoadingMessages(true);
+    setStatusError("");
+    setActiveCommunityId(communityId);
+    setReplyTarget(null);
+    setActiveFilter("all");
+    setSearchQuery("");
+    setTypingUsers([]);
+    setPendingNewMessages(0);
+    setIsScrolledUp(false);
+    isNearBottomRef.current = true;
+
+    try {
+      const data = await loadCommunityWorkspaceData(supabase, communityId);
+      setChannels(data.channels);
+      setCommunityRoles(data.roles);
+      setMembers(data.members);
+
+      const defaultRoom =
+        data.channels.find((c) => (c.room_type ?? "chat") === "chat") ??
+        data.channels[0] ??
+        null;
+
+      setActiveChannelId(defaultRoom?.id ?? null);
+
+      if (defaultRoom) {
+        const msgRes = await loadChannelMessages(
+          supabase,
+          defaultRoom.id,
+          currentUser.id,
+          data.members,
+        );
+        setMessages(msgRes.messages);
+        setPhase2Ready(msgRes.phase2Ready);
+      } else {
+        setMessages([]);
+      }
+    } catch (err) {
+      setStatusError(
+        err instanceof Error ? err.message : "Gagal memuat data komunitas.",
+      );
+    } finally {
+      setIsLoadingMessages(false);
+    }
+  }
+
+  async function handleCreateCommunity(
+    name: string,
+    description: string,
+  ): Promise<string | null> {
+    try {
+      const { data: created, error } = await supabase
+        .from("communities")
+        .insert({
+          name,
+          description: description || null,
+          owner_id: currentUser.id,
+        })
+        .select("*")
+        .single();
+
+      if (error || !created) {
+        return error?.message ?? "Gagal membuat komunitas.";
+      }
+
+      setV2Ready(true);
+      setCommunities((prev) => [...prev, created]);
+      await switchCommunity(created.id);
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : "Gagal membuat komunitas.";
+    }
+  }
+
+  async function handleJoinCommunity(inviteCode: string): Promise<string | null> {
+    try {
+      const { data: joinedId, error } = await supabase.rpc(
+        "join_community_by_code",
+        {
+          p_invite_code: inviteCode,
+        },
+      );
+
+      if (error || !joinedId) {
+        return error?.message ?? "Kode undangan tidak ditemukan.";
+      }
+
+      const commRes = await loadUserCommunities(supabase, currentUser.id);
+      setCommunities(commRes.communities);
+      await switchCommunity(joinedId);
+      return null;
+    } catch (err) {
+      return err instanceof Error
+        ? err.message
+        : "Gagal bergabung ke komunitas.";
+    }
+  }
+
+  async function handleCreateRole(name: string): Promise<string | null> {
+    if (!activeCommunityId) {
+      return "Tidak ada komunitas aktif.";
+    }
+
+    const slug = `${name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")}_${Date.now().toString(36).slice(-4)}`;
+
+    const { data, error } = await supabase
+      .from("community_roles")
+      .insert({
+        community_id: activeCommunityId,
+        name,
+        slug,
+        is_system: false,
+      })
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      return error?.message ?? "Gagal membuat peran baru.";
+    }
+
+    setCommunityRoles((prev) => [...prev, data]);
+    return null;
+  }
+
+  async function handleUpdateRolePermission(
+    roleId: string,
+    field: keyof Pick<
+      CommunityRole,
+      | "can_create_room"
+      | "can_update_room"
+      | "can_delete_room"
+      | "can_moderate_members"
+      | "can_send_messages"
+    >,
+    value: boolean,
+  ): Promise<string | null> {
+    const patch: Database["public"]["Tables"]["community_roles"]["Update"] = {
+      [field]: value,
+    };
+
+    const { data, error } = await supabase
+      .from("community_roles")
+      .update(patch)
+      .eq("id", roleId)
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      return error?.message ?? "Gagal memperbarui izin peran.";
+    }
+
+    setCommunityRoles((prev) => prev.map((r) => (r.id === roleId ? data : r)));
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.communityRole?.id === roleId ? { ...m, communityRole: data } : m,
+      ),
+    );
+    return null;
+  }
+
+  async function handleDeleteRole(roleId: string): Promise<string | null> {
+    const { error } = await supabase
+      .from("community_roles")
+      .delete()
+      .eq("id", roleId);
+
+    if (error) {
+      return error.message;
+    }
+
+    setCommunityRoles((prev) => prev.filter((r) => r.id !== roleId));
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.communityRole?.id === roleId ? { ...m, communityRole: null } : m,
+      ),
+    );
+    return null;
+  }
+
+  async function handleAssignMemberRole(
+    userId: string,
+    roleId: string,
+  ): Promise<string | null> {
+    if (!activeCommunityId) {
+      return "Tidak ada komunitas aktif.";
+    }
+
+    const { error } = await supabase
+      .from("community_members")
+      .update({ role_id: roleId })
+      .eq("community_id", activeCommunityId)
+      .eq("user_id", userId);
+
+    if (error) {
+      return error.message;
+    }
+
+    const targetRole = communityRoles.find((r) => r.id === roleId) ?? null;
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.id === userId ? { ...m, communityRole: targetRole } : m,
+      ),
+    );
+    return null;
   }
 
   function handleSelectChannel(channelId: string) {
@@ -711,7 +997,7 @@ export function ChatWorkspace({
       }
       window.dispatchEvent(new Event(STORAGE_SYNC_EVENT));
     } catch {
-      // Abaikan jika localStorage tidak tersedia
+      // Abaikan
     }
   }
 
@@ -721,7 +1007,7 @@ export function ChatWorkspace({
       window.localStorage.setItem("bertemanyuk:muted", String(next));
       window.dispatchEvent(new Event(STORAGE_SYNC_EVENT));
     } catch {
-      // Abaikan jika localStorage tidak tersedia
+      // Abaikan
     }
     if (!next) {
       playNotificationPing();
@@ -734,7 +1020,7 @@ export function ChatWorkspace({
       window.localStorage.setItem("bertemanyuk:density", next);
       window.dispatchEvent(new Event(STORAGE_SYNC_EVENT));
     } catch {
-      // Abaikan jika localStorage tidak tersedia
+      // Abaikan
     }
   }
 
@@ -743,8 +1029,7 @@ export function ChatWorkspace({
     if (!el) {
       return;
     }
-    const distanceFromBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const nearBottom = distanceFromBottom < 90;
     isNearBottomRef.current = nearBottom;
     setIsScrolledUp(!nearBottom);
@@ -770,7 +1055,7 @@ export function ChatWorkspace({
       return;
     }
 
-    const header = `# Ringkasan Solusi — #${activeChannel.name}\n\n`;
+    const header = `# Ringkasan Solusi — ${activeChannel.name}\n\n`;
     const body = highlighted
       .map((m, idx) => {
         const author = m.author?.username ?? "anggota";
@@ -806,46 +1091,90 @@ export function ChatWorkspace({
     });
   }
 
-  async function handleSendMessage(content: string) {
-    if (!activeChannelId) {
-      return;
-    }
-
-    setIsSending(true);
-    setStatusError("");
-
-    try {
-      const { data: inserted, error } = await supabase
-        .from("messages")
-        .insert({
-          content,
-          channel_id: activeChannelId,
-          user_id: currentUser.id,
-          reply_to_id: replyTarget?.id ?? null,
-        })
-        .select("*")
-        .single();
-
-      if (error || !inserted) {
-        setStatusError(error?.message ?? "Gagal mengirim pesan.");
+    async function handleSendMessage(content: string, imageFile: File | null) {
+      if (!activeChannelId) {
         return;
       }
 
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === inserted.id)) {
-          return prev;
+      setIsSending(true);
+      setStatusError("");
+
+      try {
+        let attachmentUrl: string | null = null;
+        let attachmentName: string | null = null;
+        let attachmentSize: number | null = null;
+
+        if (imageFile) {
+          const safeFileName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const storagePath = `${currentUser.id}/${Date.now()}_${safeFileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("chat-media")
+            .upload(storagePath, imageFile, {
+              contentType: imageFile.type,
+              upsert: false,
+            });
+
+          if (uploadError) {
+            setStatusError(
+              `Gagal mengunggah gambar: ${uploadError.message}`,
+            );
+            return;
+          }
+
+          const { data: publicData } = supabase.storage
+            .from("chat-media")
+            .getPublicUrl(storagePath);
+
+          attachmentUrl = publicData.publicUrl;
+          attachmentName = imageFile.name;
+          attachmentSize = imageFile.size;
         }
-        return [
-          ...prev,
-          {
-            ...inserted,
-            author: currentUser,
-            replyTo: replyTarget
-              ? {
-                id: replyTarget.id,
-                content: replyTarget.content,
-                authorUsername: replyTarget.author?.username ?? "anggota",
-              }
+
+        const payload: Database["public"]["Tables"]["messages"]["Insert"] =
+          attachmentUrl
+            ? {
+              content: content || "",
+              channel_id: activeChannelId,
+              user_id: currentUser.id,
+              reply_to_id: replyTarget?.id ?? null,
+              attachment_url: attachmentUrl,
+              attachment_name: attachmentName,
+              attachment_size: attachmentSize,
+            }
+            : {
+              content,
+              channel_id: activeChannelId,
+              user_id: currentUser.id,
+              reply_to_id: replyTarget?.id ?? null,
+            };
+
+        const { data: inserted, error } = await supabase
+          .from("messages")
+          .insert(payload)
+          .select("*")
+          .single();
+
+        if (error || !inserted) {
+          setStatusError(error?.message ?? "Gagal mengirim pesan.");
+          return;
+        }
+
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === inserted.id)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              ...inserted,
+              author: currentUser,
+              replyTo: replyTarget
+                ? {
+                  id: replyTarget.id,
+              content: replyTarget.content,
+              authorUsername: replyTarget.author?.username ?? "anggota",
+            }
               : null,
             poll: null,
             isBookmarked: false,
@@ -1124,22 +1453,34 @@ export function ChatWorkspace({
   async function handleCreateChannel(
     name: string,
     description: string,
+    roomType: RoomType,
   ): Promise<string | null> {
     try {
+      const insertPayload: Database["public"]["Tables"]["channels"]["Insert"] =
+        v2Ready
+          ? {
+            name,
+            description: description || null,
+            created_by: currentUser.id,
+            community_id: activeCommunityId,
+            room_type: roomType,
+          }
+          : {
+            name,
+            description: description || null,
+            created_by: currentUser.id,
+          };
+
       const { data, error } = await supabase
         .from("channels")
-        .insert({
-          name,
-          description: description || null,
-          created_by: currentUser.id,
-        })
+        .insert(insertPayload)
         .select("*")
         .single();
 
-      if (error) {
-        return error.code === "23505"
-          ? "Nama channel sudah digunakan."
-          : error.message;
+      if (error || !data) {
+        return error?.code === "23505"
+          ? "Nama ruang sudah digunakan di komunitas ini."
+          : (error?.message ?? "Gagal membuat ruang.");
       }
 
       setChannels((prev) => {
@@ -1153,7 +1494,55 @@ export function ChatWorkspace({
       setReplyTarget(null);
       return null;
     } catch (err) {
-      return err instanceof Error ? err.message : "Gagal membuat channel.";
+      return err instanceof Error ? err.message : "Gagal membuat ruang.";
+    }
+  }
+
+  async function handleCreateRoomInCollection(
+    name: string,
+    description: string,
+    roomType: Exclude<RoomType, "collection">,
+    subcategory: string,
+  ): Promise<string | null> {
+    if (!activeChannel || activeChannel.room_type !== "collection") {
+      return "Koleksi aktif tidak ditemukan.";
+    }
+
+    try {
+      const insertPayload: Database["public"]["Tables"]["channels"]["Insert"] =
+      {
+        name,
+        description: description || null,
+        created_by: currentUser.id,
+        community_id: activeCommunityId,
+        room_type: roomType,
+        parent_collection_id: activeChannel.id,
+        subcategory: subcategory || "Umum",
+      };
+
+      const { data, error } = await supabase
+        .from("channels")
+        .insert(insertPayload)
+        .select("*")
+        .single();
+
+      if (error || !data) {
+        return error?.code === "23505"
+          ? "Nama ruang sudah digunakan di komunitas ini."
+          : (error?.message ?? "Gagal menambahkan ruang ke koleksi.");
+      }
+
+      setChannels((prev) => {
+        if (prev.some((c) => c.id === data.id)) {
+          return prev;
+        }
+        return [...prev, data].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      return null;
+    } catch (err) {
+      return err instanceof Error
+        ? err.message
+        : "Gagal menambahkan ruang ke koleksi.";
     }
   }
 
@@ -1173,10 +1562,10 @@ export function ChatWorkspace({
         .select("*")
         .single();
 
-      if (error) {
-        return error.code === "23505"
-          ? "Nama channel sudah digunakan."
-          : error.message;
+      if (error || !data) {
+        return error?.code === "23505"
+          ? "Nama ruang sudah digunakan."
+          : (error?.message ?? "Gagal memperbarui ruang.");
       }
 
       setChannels((prev) =>
@@ -1186,7 +1575,7 @@ export function ChatWorkspace({
       );
       return null;
     } catch (err) {
-      return err instanceof Error ? err.message : "Gagal memperbarui channel.";
+      return err instanceof Error ? err.message : "Gagal memperbarui ruang.";
     }
   }
 
@@ -1217,7 +1606,7 @@ export function ChatWorkspace({
       }
     } catch (err) {
       setStatusError(
-        err instanceof Error ? err.message : "Gagal menghapus channel.",
+        err instanceof Error ? err.message : "Gagal menghapus ruang.",
       );
     }
   }
@@ -1237,40 +1626,131 @@ export function ChatWorkspace({
     }, 2200);
   }
 
+  const canModerateMessages =
+    currentUser.role === "ADMIN" ||
+    Boolean(currentCommunityRole?.can_moderate_members) ||
+    activeCommunity?.owner_id === currentUser.id;
+
+  const canManageActiveRoom =
+    currentUser.role === "ADMIN" ||
+    activeCommunity?.owner_id === currentUser.id ||
+    Boolean(currentCommunityRole?.can_update_room) ||
+    (activeRoomType === "collection" &&
+      activeChannel?.created_by === currentUser.id);
+
+  const canCreateInCollection =
+    canManageActiveRoom || Boolean(currentCommunityRole?.can_create_room);
+
+  const parentCollection = useMemo(() => {
+    if (!activeChannel?.parent_collection_id) {
+      return null;
+    }
+    return (
+      channels.find((c) => c.id === activeChannel.parent_collection_id) ?? null
+    );
+  }, [channels, activeChannel]);
+
+  const composerDisabledReason = useMemo(() => {
+    if (!activeChannel) {
+      return null;
+    }
+    if (activeChannel.allow_member_messages === false && !canModerateMessages) {
+      return "Hanya Pemilik dan Pengurus yang dapat mengirim pesan di ruang ini.";
+    }
+    if (
+      v2Ready &&
+      currentCommunityRole &&
+      !currentCommunityRole.can_send_messages &&
+      !canModerateMessages
+    ) {
+      return "Peran kamu di komunitas ini tidak memiliki izin mengirim pesan.";
+    }
+    return null;
+  }, [activeChannel, canModerateMessages, v2Ready, currentCommunityRole]);
+
+  const activeTabSettings = useMemo(
+    () => ({
+      links: activeChannel?.settings?.tabs?.links ?? true,
+      code: activeChannel?.settings?.tabs?.code ?? true,
+      bookmarks: activeChannel?.settings?.tabs?.bookmarks ?? true,
+      solutions: activeChannel?.settings?.tabs?.solutions ?? true,
+    }),
+    [activeChannel?.settings],
+  );
+
+  // Untuk MessageItem, Admin sistem atau Pemilik/Pengurus komunitas boleh moderasi/solusi
+  const effectiveUserForMessage = useMemo(
+    () =>
+      canModerateMessages
+        ? { ...currentUser, role: "ADMIN" as const }
+        : currentUser,
+    [currentUser, canModerateMessages],
+  );
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#313338] text-[#f2f3f5]">
-      {/* Sidebar Kiri (Desktop) */}
+      {/* Rail Komunitas + Sidebar Ruang (Desktop) */}
       <div className="hidden lg:flex">
+        <CommunityRail
+          communities={communities}
+          activeCommunityId={activeCommunityId}
+          v2Ready={v2Ready}
+          onSelectCommunity={(id) => void switchCommunity(id)}
+          onCreateCommunity={handleCreateCommunity}
+          onJoinCommunity={handleJoinCommunity}
+        />
+
         <ChannelSidebar
+          activeCommunity={activeCommunity}
+          currentCommunityRole={currentCommunityRole}
           channels={channels}
           activeChannelId={activeChannelId}
           unreadCounts={unreadCounts}
+          roomViewerCounts={roomViewerCounts}
           currentUser={currentUser}
           currentVibe={currentVibe}
+          v2Ready={v2Ready}
           onChangeVibe={handleChangeVibe}
           onSelectChannel={handleSelectChannel}
           onCreateChannel={handleCreateChannel}
           onUpdateChannel={handleUpdateChannel}
           onDeleteChannel={handleDeleteChannel}
+          onOpenRolesModal={() => setShowRolesModal(true)}
           onOpenProfile={() => setShowProfileModal(true)}
         />
       </div>
 
-      {/* Drawer Sidebar Kiri (Mobile) */}
+      {/* Drawer Kiri (Mobile) */}
       {showLeftDrawer && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
           <div className="relative z-10 flex h-full">
+            <CommunityRail
+              communities={communities}
+              activeCommunityId={activeCommunityId}
+              v2Ready={v2Ready}
+              onSelectCommunity={(id) => void switchCommunity(id)}
+              onCreateCommunity={handleCreateCommunity}
+              onJoinCommunity={handleJoinCommunity}
+            />
             <ChannelSidebar
+              activeCommunity={activeCommunity}
+              currentCommunityRole={currentCommunityRole}
               channels={channels}
               activeChannelId={activeChannelId}
               unreadCounts={unreadCounts}
+              roomViewerCounts={roomViewerCounts}
               currentUser={currentUser}
               currentVibe={currentVibe}
+              v2Ready={v2Ready}
               onChangeVibe={handleChangeVibe}
               onSelectChannel={handleSelectChannel}
               onCreateChannel={handleCreateChannel}
               onUpdateChannel={handleUpdateChannel}
               onDeleteChannel={handleDeleteChannel}
+              onOpenRolesModal={() => {
+                setShowLeftDrawer(false);
+                setShowRolesModal(true);
+              }}
               onOpenProfile={() => {
                 setShowLeftDrawer(false);
                 setShowProfileModal(true);
@@ -1280,32 +1760,53 @@ export function ChatWorkspace({
           </div>
           <button
             type="button"
-            aria-label="Tutup overlay channel"
+            aria-label="Tutup navigasi"
             onClick={() => setShowLeftDrawer(false)}
             className="flex-1 bg-black/60"
           />
         </div>
       )}
 
-      {/* Kolom Tengah: Area Chat */}
+      {/* Kolom Tengah: Area Ruang Aktif */}
       <main className="flex min-w-0 flex-1 flex-col bg-[#313338]">
-        {/* Header Channel */}
+        {/* Header Ruang */}
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <button
               type="button"
               onClick={() => setShowLeftDrawer(true)}
-              aria-label="Buka daftar channel"
+              aria-label="Buka daftar ruang"
               className="rounded-lg p-1.5 text-[#b5bac1] hover:bg-white/10 hover:text-white lg:hidden"
             >
               <Menu className="h-5 w-5" />
             </button>
 
-            <Hash className="h-5 w-5 shrink-0 text-[#80848e]" />
+            {parentCollection && (
+              <button
+                type="button"
+                onClick={() => handleSelectChannel(parentCollection.id)}
+                title={`Kembali ke Koleksi ${parentCollection.name}`}
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-400/25 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-400/20"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                <span className="hidden sm:inline">
+                  {parentCollection.name}
+                </span>
+              </button>
+            )}
+
+            {activeRoomType === "voice" ? (
+              <Volume2 className="h-5 w-5 shrink-0 text-emerald-400" />
+            ) : activeRoomType === "collection" ? (
+              <FolderKanban className="h-5 w-5 shrink-0 text-amber-300" />
+            ) : (
+              <Hash className="h-5 w-5 shrink-0 text-[#80848e]" />
+            )}
+
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="truncate text-sm font-bold text-[#f2f3f5] sm:text-base">
-                  {activeChannel?.name ?? "Pilih Channel"}
+                  {activeChannel?.name ?? "Pilih Ruang"}
                 </h1>
                 <span
                   title={
@@ -1343,22 +1844,24 @@ export function ChatWorkspace({
           <div className="flex items-center gap-1.5">
             <ActiveChannelViewers viewers={activeChannelViewers} />
 
-            <button
-              type="button"
-              onClick={handleToggleDensity}
-              title={
-                density === "cozy"
-                  ? "Ubah ke Mode Ringkas (Compact)"
-                  : "Ubah ke Mode Nyaman (Cozy)"
-              }
-              className="rounded-lg p-2 text-[#b5bac1] transition hover:bg-white/10 hover:text-white"
-            >
-              {density === "cozy" ? (
-                <Rows3 className="h-4 w-4" />
-              ) : (
-                <AlignJustify className="h-4 w-4 text-[#8ea1e1]" />
-              )}
-            </button>
+            {activeRoomType === "chat" && (
+              <button
+                type="button"
+                onClick={handleToggleDensity}
+                title={
+                  density === "cozy"
+                    ? "Ubah ke Mode Ringkas (Compact)"
+                    : "Ubah ke Mode Nyaman (Cozy)"
+                }
+                className="rounded-lg p-2 text-[#b5bac1] transition hover:bg-white/10 hover:text-white"
+              >
+                {density === "cozy" ? (
+                  <Rows3 className="h-4 w-4" />
+                ) : (
+                  <AlignJustify className="h-4 w-4 text-[#8ea1e1]" />
+                )}
+              </button>
+            )}
 
             <button
               type="button"
@@ -1380,7 +1883,7 @@ export function ChatWorkspace({
               )}
             </button>
 
-            {activeChannelId && (
+            {activeChannelId && activeRoomType === "chat" && (
               <button
                 type="button"
                 onClick={() => void fetchChannelData(activeChannelId)}
@@ -1394,13 +1897,46 @@ export function ChatWorkspace({
               </button>
             )}
 
+            {activeChannel && canManageActiveRoom && (
+              <button
+                type="button"
+                onClick={() => setShowRoomSettingsModal(true)}
+                title="Pengaturan Ruang"
+                className="rounded-lg p-2 text-[#b5bac1] transition hover:bg-white/10 hover:text-white"
+              >
+                <Settings2 className="h-4 w-4" />
+              </button>
+            )}
+
+            {activeChannel && activeRoomType === "chat" && (
+              <button
+                type="button"
+                onClick={() =>
+                  setRightPanelMode((prev) =>
+                    prev === "info" ? "members" : "info",
+                  )
+                }
+                title="Panel Informasi Ruang & Arsip"
+                className={`rounded-lg p-2 transition ${rightPanelMode === "info"
+                    ? "bg-[#5865f2]/25 text-[#c7d0ff]"
+                    : "text-[#b5bac1] hover:bg-white/10 hover:text-white"
+                  }`}
+              >
+                <Info className="h-4 w-4" />
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => setShowDesktopMembers((prev) => !prev)}
+              onClick={() =>
+                setRightPanelMode((prev) =>
+                  prev === "members" ? "none" : "members",
+                )
+              }
               title="Tampilkan / sembunyikan daftar anggota"
-              className={`hidden rounded-lg p-2 transition xl:inline-flex ${showDesktopMembers
-                ? "bg-white/10 text-white"
-                : "text-[#b5bac1] hover:bg-white/10 hover:text-white"
+              className={`hidden rounded-lg p-2 transition xl:inline-flex ${rightPanelMode === "members"
+                  ? "bg-white/10 text-white"
+                  : "text-[#b5bac1] hover:bg-white/10 hover:text-white"
                 }`}
             >
               <Users className="h-4 w-4" />
@@ -1409,7 +1945,7 @@ export function ChatWorkspace({
             <button
               type="button"
               onClick={() => setShowRightDrawer(true)}
-              title="Buka daftar anggota"
+              title="Buka panel samping"
               className="rounded-lg p-2 text-[#b5bac1] transition hover:bg-white/10 hover:text-white xl:hidden"
             >
               <Users className="h-4 w-4" />
@@ -1417,105 +1953,116 @@ export function ChatWorkspace({
           </div>
         </header>
 
-        {/* Bar Filter Cepat & Pencarian */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#2b2d31]/60 px-4 py-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <FilterPill
-              active={activeFilter === "all"}
-              onClick={() => setActiveFilter("all")}
-              icon={<MessageSquare className="h-3.5 w-3.5" />}
-              label="Semua"
-              count={messages.length}
-            />
-            <FilterPill
-              active={activeFilter === "links"}
-              onClick={() => setActiveFilter("links")}
-              icon={<Link2 className="h-3.5 w-3.5" />}
-              label="Link"
-              count={filterCounts.links}
-            />
-            <FilterPill
-              active={activeFilter === "code"}
-              onClick={() => setActiveFilter("code")}
-              icon={<Code2 className="h-3.5 w-3.5" />}
-              label="Kode"
-              count={filterCounts.code}
-            />
-            {phase2Ready && (
-              <>
-                <FilterPill
-                  active={activeFilter === "bookmarks"}
-                  onClick={() => setActiveFilter("bookmarks")}
-                  icon={<Bookmark className="h-3.5 w-3.5" />}
-                  label="Saku Pesan"
-                  count={filterCounts.bookmarks}
-                />
-                <FilterPill
-                  active={activeFilter === "highlights"}
-                  onClick={() => setActiveFilter("highlights")}
-                  icon={<Award className="h-3.5 w-3.5" />}
-                  label="Solusi"
-                  count={filterCounts.highlights}
-                />
-                {filterCounts.highlights > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => void handleExportHighlightsMarkdown()}
-                    title="Salin seluruh pesan bertanda Solusi dalam format Markdown"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20"
-                  >
-                    {copiedHighlights ? (
-                      <>
-                        <Check className="h-3.5 w-3.5" />
-                        <span>Tersalin (.md)</span>
-                      </>
-                    ) : (
-                      <>
-                        <FileDown className="h-3.5 w-3.5" />
-                        <span>Salin Solusi</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="relative w-full sm:w-52">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-[#949ba4]" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari di channel ini..."
-              className="w-full rounded-lg border border-white/10 bg-[#1e1f22] py-1 pr-7 pl-8 text-xs text-[#f2f3f5] placeholder:text-[#6d737d] focus:border-[#5865f2] focus:outline-none"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                aria-label="Hapus pencarian"
-                className="absolute top-1/2 right-2 -translate-y-1/2 text-[#949ba4] hover:text-white"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Notifikasi jika migrasi SQL Fase 2 belum dijalankan */}
-        {!phase2Ready && (
-          <div className="flex items-start gap-2.5 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-100">
+        {/* Notifikasi migrasi v2.0 jika belum dijalankan */}
+        {!v2Ready && (
+          <div className="flex items-start gap-2.5 border-b border-amber-500/25 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-100">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
             <p className="leading-relaxed">
               Jalankan{" "}
               <code className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-amber-200">
-                supabase/migrations/002_phase2_features.sql
+                supabase/migrations/003_v2_communities_and_rooms.sql
               </code>{" "}
               di Supabase SQL Editor untuk mengaktifkan fitur{" "}
-              <strong>Saku Pesan (Bookmark)</strong>,{" "}
-              <strong>Tandai Solusi</strong>, dan <strong>Quick Poll</strong>.
+              <strong>Multi-Komunitas</strong>, <strong>Sistem Peran</strong>,
+              serta <strong>Ruang Suara &amp; Ruang Koleksi</strong>.
             </p>
+          </div>
+        )}
+
+        {/* Bar Filter Cepat (Khusus Ruang Obrolan) */}
+        {activeRoomType === "chat" && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-[#2b2d31]/60 px-4 py-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <FilterPill
+                active={activeFilter === "all"}
+                onClick={() => setActiveFilter("all")}
+                icon={<MessageSquare className="h-3.5 w-3.5" />}
+                label="Semua"
+                count={messages.length}
+              />
+              {activeTabSettings.links && (
+                <FilterPill
+                  active={activeFilter === "links"}
+                  onClick={() => setActiveFilter("links")}
+                  icon={<Link2 className="h-3.5 w-3.5" />}
+                  label="Tautan"
+                  count={filterCounts.links}
+                />
+              )}
+              {activeTabSettings.code && (
+                <FilterPill
+                  active={activeFilter === "code"}
+                  onClick={() => setActiveFilter("code")}
+                  icon={<Code2 className="h-3.5 w-3.5" />}
+                  label="Kode"
+                  count={filterCounts.code}
+                />
+              )}
+              {phase2Ready && (
+                <>
+                  {activeTabSettings.bookmarks && (
+                    <FilterPill
+                      active={activeFilter === "bookmarks"}
+                      onClick={() => setActiveFilter("bookmarks")}
+                      icon={<Bookmark className="h-3.5 w-3.5" />}
+                      label="Saku Pesan"
+                      count={filterCounts.bookmarks}
+                    />
+                  )}
+                  {activeTabSettings.solutions && (
+                    <FilterPill
+                      active={activeFilter === "highlights"}
+                      onClick={() => setActiveFilter("highlights")}
+                      icon={<Award className="h-3.5 w-3.5" />}
+                      label="Solusi"
+                      count={filterCounts.highlights}
+                    />
+                  )}
+                  {activeTabSettings.solutions &&
+                    filterCounts.highlights > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => void handleExportHighlightsMarkdown()}
+                        title="Salin seluruh pesan bertanda Solusi dalam format Markdown"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+                      >
+                        {copiedHighlights ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Tersalin (.md)</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileDown className="h-3.5 w-3.5" />
+                            <span>Salin Solusi</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                </>
+              )}
+            </div>
+
+            <div className="relative w-full sm:w-52">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-[#949ba4]" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari di ruang ini..."
+                className="w-full rounded-lg border border-white/10 bg-[#1e1f22] py-1 pr-7 pl-8 text-xs text-[#f2f3f5] placeholder:text-[#6d737d] focus:border-[#5865f2] focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Hapus pencarian"
+                  className="absolute top-1/2 right-2 -translate-y-1/2 text-[#949ba4] hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -1535,152 +2082,245 @@ export function ChatWorkspace({
           </div>
         )}
 
-        {/* Daftar Pesan */}
-        <div
-          ref={scrollContainerRef}
-          onScroll={handleMessagesScroll}
-          className="relative flex-1 overflow-y-auto px-3 py-4 sm:px-5"
-        >
-          {!activeChannel ? (
-            <div className="flex h-full flex-col items-center justify-center text-center text-[#949ba4]">
-              <Hash className="mb-2 h-10 w-10 text-[#6d737d]" />
-              <p className="text-sm font-medium text-[#dbdee1]">
-                Belum ada channel tersedia
-              </p>
-              <p className="mt-1 text-xs">
-                Jalankan seed channel di SQL Editor atau buat channel baru
-                sebagai Admin.
-              </p>
+        {/* Konten Utama sesuai Jenis Ruang */}
+        {activeRoomType === "voice" && activeChannel ? (
+          <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-300">
+              <Mic className="h-8 w-8" />
             </div>
-          ) : isLoadingMessages ? (
-            <div className="flex h-full items-center justify-center gap-2 text-sm text-[#949ba4]">
-              <Loader2 className="h-5 w-5 animate-spin text-[#5865f2]" />
-              <span>Memuat pesan #{activeChannel.name}...</span>
-            </div>
-          ) : filteredMessages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-center">
-              <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#2b2d31] text-[#8ea1e1]">
-                <Hash className="h-7 w-7" />
+            <h2 className="text-xl font-bold text-[#f2f3f5]">
+              Ruang Suara: {activeChannel.name}
+            </h2>
+            <p className="mt-1.5 max-w-md text-sm text-[#b5bac1]">
+              {activeChannel.description ??
+                "Ruang panggilan suara real-time dan pesan pendamping."}
+            </p>
+
+            <div className="mt-6 w-full max-w-md rounded-2xl border border-white/10 bg-[#2b2d31] p-4">
+              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[#949ba4]">
+                Sedang di Ruang Suara ({activeChannelViewers.length})
+              </p>
+              <div className="flex flex-wrap justify-center gap-3">
+                {activeChannelViewers.map((viewer) => (
+                  <div
+                    key={viewer.userId}
+                    className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-[#1e1f22] py-1 pr-3 pl-1.5"
+                  >
+                    <UserAvatar
+                      username={viewer.username}
+                      avatarUrl={viewer.avatarUrl}
+                      size="sm"
+                    />
+                    <span className="text-xs font-semibold text-[#f2f3f5]">
+                      @{viewer.username}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <h2 className="text-lg font-bold text-[#f2f3f5]">
-                {messages.length === 0
-                  ? `Selamat datang di #${activeChannel.name}!`
-                  : "Tidak ada pesan yang cocok dengan filter"}
-              </h2>
-              <p className="mt-1 max-w-md text-xs leading-relaxed text-[#949ba4]">
-                {messages.length === 0
-                  ? "Mulai obrolan pertama, bagikan potongan kode, sisipkan ||spoiler||, atau buat /poll instan untuk komunitas."
-                  : "Coba ubah filter cepat atau kata kunci pencarian di atas."}
+              <p className="mt-4 text-xs text-[#949ba4]">
+                Kontrol mikrofon WebRTC &amp; pesan pendamping siap diaktifkan
+                pada <strong>Tahap 3</strong>.
               </p>
-              {activeFilter !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveFilter("all");
-                    setSearchQuery("");
-                  }}
-                  className="mt-3 rounded-lg bg-[#5865f2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#4752c4]"
+            </div>
+          </div>
+        ) : activeRoomType === "collection" && activeChannel ? (
+          <CollectionView
+            collection={activeChannel}
+            allRooms={channels}
+            roomViewerCounts={roomViewerCounts}
+            canManageCollection={canManageActiveRoom}
+            canCreateChildRoom={canCreateInCollection}
+            onSelectRoom={handleSelectChannel}
+            onOpenCollectionSettings={() => setShowRoomSettingsModal(true)}
+            onCreateRoomInCollection={handleCreateRoomInCollection}
+          />
+        ) : (
+          <>
+            {/* Daftar Pesan Ruang Obrolan */}
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleMessagesScroll}
+              className="relative flex-1 overflow-y-auto px-3 py-4 sm:px-5"
+            >
+              {!activeChannel ? (
+                <div className="flex h-full flex-col items-center justify-center text-center text-[#949ba4]">
+                  <Hash className="mb-2 h-10 w-10 text-[#6d737d]" />
+                  <p className="text-sm font-medium text-[#dbdee1]">
+                    {v2Ready && communities.length === 0
+                      ? "Belum tergabung ke Komunitas mana pun"
+                      : "Belum ada Ruang tersedia"}
+                  </p>
+                  <p className="mt-1 text-xs">
+                    {v2Ready && communities.length === 0
+                      ? "Klik tombol + di rail kiri untuk membuat Komunitas pertamamu, atau masukkan kode undangan."
+                      : "Buat Ruang baru dari sidebar kiri."}
+                  </p>
+                </div>
+              ) : isLoadingMessages ? (
+                <div className="flex h-full items-center justify-center gap-2 text-sm text-[#949ba4]">
+                  <Loader2 className="h-5 w-5 animate-spin text-[#5865f2]" />
+                  <span>Memuat pesan di {activeChannel.name}...</span>
+                </div>
+              ) : filteredMessages.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center text-center">
+                  <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#2b2d31] text-[#8ea1e1]">
+                    <Hash className="h-7 w-7" />
+                  </div>
+                  <h2 className="text-lg font-bold text-[#f2f3f5]">
+                    {messages.length === 0
+                      ? `Selamat datang di ${activeChannel.name}!`
+                      : "Tidak ada pesan yang cocok dengan filter"}
+                  </h2>
+                  <p className="mt-1 max-w-md text-xs leading-relaxed text-[#949ba4]">
+                    {messages.length === 0
+                      ? "Mulai obrolan pertama, bagikan potongan kode, sisipkan ||spoiler||, atau buat /poll instan untuk komunitas."
+                      : "Coba ubah filter cepat atau kata kunci pencarian di atas."}
+                  </p>
+                  {activeFilter !== "all" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveFilter("all");
+                        setSearchQuery("");
+                      }}
+                      className="mt-3 rounded-lg bg-[#5865f2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#4752c4]"
+                    >
+                      Tampilkan Semua Pesan
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div
+                  className={
+                    density === "compact" ? "space-y-0.5" : "space-y-1.5"
+                  }
                 >
-                  Tampilkan Semua Pesan
-                </button>
+                  {filteredMessages.map((msg) => (
+                    <MessageItem
+                      key={msg.id}
+                      message={msg}
+                      currentUser={effectiveUserForMessage}
+                      density={density}
+                      isFocused={focusedMessageId === msg.id}
+                      phase2Ready={phase2Ready}
+                      onReply={setReplyTarget}
+                      onDelete={(id) => void handleDeleteMessage(id)}
+                      onToggleBookmark={(m) => void handleToggleBookmark(m)}
+                      onToggleHighlight={(m) => void handleToggleHighlight(m)}
+                      onVotePoll={(pollId, optionId) =>
+                        void handleVotePoll(pollId, optionId)
+                      }
+                      onJumpToMessage={handleJumpToMessage}
+                    />
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
               )}
             </div>
-          ) : (
-            <div className={density === "compact" ? "space-y-0.5" : "space-y-1.5"}>
-              {filteredMessages.map((msg) => (
-                <MessageItem
-                  key={msg.id}
-                  message={msg}
-                  currentUser={currentUser}
-                  density={density}
-                  isFocused={focusedMessageId === msg.id}
-                  phase2Ready={phase2Ready}
-                  onReply={setReplyTarget}
-                  onDelete={(id) => void handleDeleteMessage(id)}
-                  onToggleBookmark={(m) => void handleToggleBookmark(m)}
-                  onToggleHighlight={(m) => void handleToggleHighlight(m)}
-                  onVotePoll={(pollId, optionId) =>
-                    void handleVotePoll(pollId, optionId)
-                  }
-                  onJumpToMessage={handleJumpToMessage}
-                />
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
 
-        {/* Pil Melayang Smart Auto-Scroll */}
-        {(isScrolledUp || pendingNewMessages > 0) &&
-          activeFilter === "all" &&
-          !searchQuery.trim() && (
-            <div className="relative flex justify-center">
-              <button
-                type="button"
-                onClick={scrollToBottom}
-                className={`absolute -top-11 z-20 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-lg transition ${
-                  pendingNewMessages > 0
-                    ? "bg-[#5865f2] text-white hover:bg-[#4752c4]"
-                    : "border border-white/10 bg-[#232428] text-[#dbdee1] hover:bg-[#2b2d31]"
-                }`}
-              >
-                <ArrowDown className="h-3.5 w-3.5" />
-                <span>
-                  {pendingNewMessages > 0
-                    ? `${pendingNewMessages} pesan baru`
-                    : "Ke pesan terbaru"}
-                </span>
-              </button>
-            </div>
-          )}
+            {/* Pil Melayang Smart Auto-Scroll */}
+            {(isScrolledUp || pendingNewMessages > 0) &&
+              activeFilter === "all" &&
+              !searchQuery.trim() && (
+                <div className="relative flex justify-center">
+                  <button
+                    type="button"
+                    onClick={scrollToBottom}
+                    className={`absolute -top-11 z-20 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-lg transition ${pendingNewMessages > 0
+                      ? "bg-[#5865f2] text-white hover:bg-[#4752c4]"
+                      : "border border-white/10 bg-[#232428] text-[#dbdee1] hover:bg-[#2b2d31]"
+                      }`}
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                    <span>
+                      {pendingNewMessages > 0
+                        ? `${pendingNewMessages} pesan baru`
+                        : "Ke pesan terbaru"}
+                    </span>
+                  </button>
+                </div>
+              )}
 
-        {/* Smart Typing Indicator (Broadcast) */}
-        <TypingIndicator typers={typingUsers} />
+            {/* Smart Typing Indicator */}
+            <TypingIndicator typers={typingUsers} />
 
-        {/* Composer */}
-        {activeChannel && (
-          <MessageComposer
-            channelName={activeChannel.name}
-            replyTarget={replyTarget}
-            members={members}
-            onlineUsers={onlineUsers}
-            phase2Ready={phase2Ready}
-            isSending={isSending}
-            onCancelReply={() => setReplyTarget(null)}
-            onSendMessage={handleSendMessage}
-            onSendPoll={handleSendPoll}
-            onTyping={handleBroadcastTyping}
-          />
+            {/* Composer */}
+            {activeChannel && (
+              <MessageComposer
+                channelName={activeChannel.name}
+                replyTarget={replyTarget}
+                members={members}
+                onlineUsers={onlineUsers}
+                phase2Ready={phase2Ready}
+                isSending={isSending}
+                disabledReason={composerDisabledReason}
+                onCancelReply={() => setReplyTarget(null)}
+                onSendMessage={handleSendMessage}
+                onSendPoll={handleSendPoll}
+                onTyping={handleBroadcastTyping}
+              />
+            )}
+          </>
         )}
       </main>
 
-      {/* Sidebar Kanan (Desktop) */}
-      {showDesktopMembers && (
+        {/* Panel Samping Kanan (Informasi Ruang atau Daftar Anggota) */ }
+      {rightPanelMode === "info" && activeChannel && activeRoomType === "chat" ? (
         <div className="hidden xl:flex">
-          <MemberSidebar
-            members={members}
-            onlineUsers={onlineUsers}
-            currentUserId={currentUser.id}
+          <RoomInfoPanel
+            channel={activeChannel}
+            messages={messages}
+            phase2Ready={phase2Ready}
+            onJumpToMessage={handleJumpToMessage}
+            onExportSolutionsMarkdown={handleExportHighlightsMarkdown}
+            copiedSolutions={copiedHighlights}
+            onClose={() => setRightPanelMode("members")}
           />
         </div>
-      )}
-
-      {/* Drawer Sidebar Kanan (Mobile/Tablet) */}
-      {showRightDrawer && (
-        <div className="fixed inset-0 z-40 flex justify-end xl:hidden">
-          <button
-            type="button"
-            aria-label="Tutup overlay anggota"
-            onClick={() => setShowRightDrawer(false)}
-            className="flex-1 bg-black/60"
-          />
-          <div className="relative z-10 flex h-full">
+      ) : (
+        rightPanelMode === "members" && (
+          <div className="hidden xl:flex">
             <MemberSidebar
               members={members}
               onlineUsers={onlineUsers}
               currentUserId={currentUser.id}
-              onCloseMobile={() => setShowRightDrawer(false)}
             />
+          </div>
+        )
+      )}
+
+      {showRightDrawer && (
+        <div className="fixed inset-0 z-40 flex justify-end xl:hidden">
+          <button
+            type="button"
+            aria-label="Tutup panel samping"
+            onClick={() => setShowRightDrawer(false)}
+            className="flex-1 bg-black/60"
+          />
+          <div className="relative z-10 flex h-full">
+            {rightPanelMode === "info" &&
+              activeChannel &&
+              activeRoomType === "chat" ? (
+              <RoomInfoPanel
+                channel={activeChannel}
+                messages={messages}
+                phase2Ready={phase2Ready}
+                onJumpToMessage={(id) => {
+                  setShowRightDrawer(false);
+                  handleJumpToMessage(id);
+                }}
+                onExportSolutionsMarkdown={handleExportHighlightsMarkdown}
+                copiedSolutions={copiedHighlights}
+                onClose={() => setShowRightDrawer(false)}
+              />
+            ) : (
+              <MemberSidebar
+                members={members}
+                onlineUsers={onlineUsers}
+                currentUserId={currentUser.id}
+                onCloseMobile={() => setShowRightDrawer(false)}
+              />
+            )}
           </div>
         </div>
       )}
@@ -1692,6 +2332,42 @@ export function ChatWorkspace({
         email={userEmail}
         onClose={() => setShowProfileModal(false)}
       />
+
+      {/* Modal Kelola Peran Komunitas */}
+      {activeCommunity && (
+        <CommunityRolesModal
+          isOpen={showRolesModal}
+          communityName={activeCommunity.name}
+          roles={communityRoles}
+          members={members}
+          currentUserId={currentUser.id}
+          onClose={() => setShowRolesModal(false)}
+          onCreateRole={handleCreateRole}
+          onUpdateRolePermission={handleUpdateRolePermission}
+          onDeleteRole={handleDeleteRole}
+          onAssignMemberRole={handleAssignMemberRole}
+        />
+      )}
+
+      {/* Modal Pengaturan Ruang */}
+      {activeChannel && (
+        <RoomSettingsModal
+          key={activeChannel.id}
+          isOpen={showRoomSettingsModal}
+          channel={activeChannel}
+          roles={communityRoles}
+          members={members}
+          v2Ready={v2Ready}
+          onClose={() => setShowRoomSettingsModal(false)}
+          onSaved={(updated) => {
+            setChannels((prev) =>
+              prev
+                .map((c) => (c.id === updated.id ? updated : c))
+                .sort((a, b) => a.name.localeCompare(b.name)),
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

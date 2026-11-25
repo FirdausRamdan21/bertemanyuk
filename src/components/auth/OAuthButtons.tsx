@@ -36,7 +36,14 @@ export function OAuthButtons({ isConfigured, onError }: OAuthButtonsProps) {
       });
 
       if (error) {
-        onError?.(error.message);
+        const lower = error.message.toLowerCase();
+        if (lower.includes("not enabled") || lower.includes("unsupported provider")) {
+          onError?.(
+            `Login ${provider === "google" ? "Google" : "GitHub"} belum diaktifkan di Supabase Dashboard (Authentication → Providers). Silakan gunakan Email & Kata Sandi terlebih dahulu.`,
+          );
+        } else {
+          onError?.(error.message);
+        }
         setLoadingProvider(null);
       }
     } catch (err) {

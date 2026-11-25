@@ -4,7 +4,14 @@ Aplikasi ruang diskusi komunitas bergaya Mini-Discord yang dibangun dengan **Nex
 
 ---
 
-## Fitur Utama (MVP v1.0 — Lengkap Fase 1–4)
+## Fitur BertemanYuk v2.0 (Tahap 1 & Tahap 2)
+
+- **Multi-Komunitas & Sistem Peran**: buat komunitas baru (otomatis mendapat 1 Ruang Obrolan + 1 Ruang Suara + peran Pemilik, Pengurus, Anggota), gabung via kode undangan, dan atur peran/hak akses kustom.
+- **Panel Informasi Ruang (5 Tab Arsip)**: Tautan, Kode, Saku Pesan, Solusi, dan galeri Media di sisi kanan ruang obrolan.
+- **Tombol "Fitur Teks" & Media ≤ 2 MB**: pop-up Spoiler, Blok Kode, Polling Cepat sebelum tombol Kirim, plus unggah 1 gambar (maks. 2 MB) ke Supabase Storage (`chat-media`).
+- **Panel Pengaturan Ruang (Umum, Akses, Anggota)** & **Ruang Koleksi Lengkap** dengan sub-kategori dan tambah ruang di dalam koleksi.
+
+## Fitur Dasar (MVP v1.0)
 
 ### Autentikasi & Keamanan
 - **Login & Register** via Email/Password serta **OAuth Google & GitHub** (`/auth/callback` PKCE).
@@ -48,8 +55,12 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 
 ### 2. Jalankan Skema Database & RLS
 
-- **Instalasi baru**: jalankan seluruh [`supabase/schema.sql`](./supabase/schema.sql) di **Supabase Dashboard → SQL Editor**.
-- **Upgrade dari Fase 1**: jalankan [`supabase/migrations/002_phase2_features.sql`](./supabase/migrations/002_phase2_features.sql) di **SQL Editor**.
+- **Instalasi baru**: jalankan berurutan di **Supabase Dashboard → SQL Editor**:
+  1. [`supabase/schema.sql`](./supabase/schema.sql) (skema dasar Fase 1–4)
+  2. [`supabase/migrations/003_v2_communities_and_rooms.sql`](./supabase/migrations/003_v2_communities_and_rooms.sql) (upgrade **BertemanYuk v2.0**: Multi-Komunitas, Sistem Peran Pemilik/Pengurus/Anggota, 3 Jenis Ruang, & Storage Media maks 2 MB)
+- **Upgrade dari v1.0**:
+  - Jika sudah menjalankan Fase 1 saja: jalankan [`supabase/migrations/002_phase2_features.sql`](./supabase/migrations/002_phase2_features.sql) lalu [`supabase/migrations/003_v2_communities_and_rooms.sql`](./supabase/migrations/003_v2_communities_and_rooms.sql).
+  - Jika sudah menjalankan Fase 1–4: cukup jalankan [`supabase/migrations/003_v2_communities_and_rooms.sql`](./supabase/migrations/003_v2_communities_and_rooms.sql) — seluruh channel dan profil lama otomatis dimigrasikan ke **Komunitas Utama**.
 
 ### 3. Konfigurasi OAuth Google & GitHub (Opsional)
 

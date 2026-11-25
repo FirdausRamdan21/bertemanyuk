@@ -55,17 +55,15 @@ export function MessageItem({
   return (
     <article
       id={`msg-${message.id}`}
-      className={`group relative rounded-xl transition ${
-        isCompact ? "px-2.5 py-1.5" : "px-3 py-2.5"
-      } ${
-        isFocused
+      className={`group relative rounded-xl transition ${isCompact ? "px-2.5 py-1.5" : "px-3 py-2.5"
+        } ${isFocused
           ? "bg-[#5865f2]/20 ring-1 ring-[#5865f2]/60"
           : message.isHighlighted
             ? "border border-emerald-500/25 bg-emerald-500/[0.06] hover:bg-emerald-500/[0.09]"
             : isMentioningMe
               ? "border-l-2 border-amber-400 bg-amber-400/[0.07] hover:bg-amber-400/[0.11]"
               : "hover:bg-[#2e3035]"
-      }`}
+        }`}
     >
       {/* Toolbar aksi cepat saat hover */}
       <div className="absolute -top-3 right-3 z-10 hidden items-center gap-0.5 rounded-lg border border-white/10 bg-[#2b2d31] p-0.5 shadow-lg group-hover:flex group-focus-within:flex">
@@ -87,11 +85,10 @@ export function MessageItem({
                 ? "Hapus dari Saku Pesan"
                 : "Simpan ke Saku Pesan (Bookmark Pribadi)"
             }
-            className={`rounded-md p-1.5 transition hover:bg-white/10 ${
-              message.isBookmarked
+            className={`rounded-md p-1.5 transition hover:bg-white/10 ${message.isBookmarked
                 ? "text-amber-300"
                 : "text-[#b5bac1] hover:text-amber-200"
-            }`}
+              }`}
           >
             <Bookmark
               className={`h-3.5 w-3.5 ${message.isBookmarked ? "fill-current" : ""}`}
@@ -108,11 +105,10 @@ export function MessageItem({
                 ? "Lepas tanda Solusi / Keputusan"
                 : "Tandai sebagai Solusi / Keputusan"
             }
-            className={`rounded-md p-1.5 transition hover:bg-white/10 ${
-              message.isHighlighted
+            className={`rounded-md p-1.5 transition hover:bg-white/10 ${message.isHighlighted
                 ? "text-emerald-300"
                 : "text-[#b5bac1] hover:text-emerald-200"
-            }`}
+              }`}
           >
             <Award className="h-3.5 w-3.5" />
           </button>
@@ -135,9 +131,8 @@ export function MessageItem({
         <button
           type="button"
           onClick={() => onJumpToMessage(message.replyTo!.id)}
-          className={`mb-1 flex max-w-full items-center gap-1.5 rounded-md bg-white/[0.04] px-2 py-0.5 text-left text-xs text-[#949ba4] transition hover:bg-white/[0.08] hover:text-[#dbdee1] ${
-            isCompact ? "ml-2" : "ml-12"
-          }`}
+          className={`mb-1 flex max-w-full items-center gap-1.5 rounded-md bg-white/[0.04] px-2 py-0.5 text-left text-xs text-[#949ba4] transition hover:bg-white/[0.08] hover:text-[#dbdee1] ${isCompact ? "ml-2" : "ml-12"
+            }`}
         >
           <CornerUpLeft className="h-3 w-3 shrink-0 text-[#8ea1e1]" />
           <span className="shrink-0 font-semibold text-[#b5bac1]">
@@ -168,9 +163,8 @@ export function MessageItem({
             )}
 
             <span
-              className={`font-semibold text-[#f2f3f5] ${
-                isCompact ? "text-xs" : "text-sm"
-              }`}
+              className={`font-semibold text-[#f2f3f5] ${isCompact ? "text-xs" : "text-sm"
+                }`}
             >
               @{authorName}
             </span>
@@ -206,12 +200,38 @@ export function MessageItem({
             )}
           </div>
 
-          {!message.poll && (
-            <div className={isCompact ? "mt-0.5" : "mt-1"}>
-              <RichMessageContent
-                content={message.content}
-                currentUsername={currentUser.username}
-              />
+            {!message.poll && message.content.trim().length > 0 && (
+          <div className={isCompact ? "mt-0.5" : "mt-1"}>
+            <RichMessageContent
+              content={message.content}
+              currentUsername={currentUser.username}
+            />
+          </div>
+          )}
+
+          {message.attachment_url && (
+            <div className="mt-2">
+              <a
+                href={message.attachment_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block overflow-hidden rounded-xl border border-white/10 bg-[#1e1f22]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={message.attachment_url}
+                  alt={message.attachment_name ?? "Lampiran gambar"}
+                  className="max-h-72 max-w-full object-contain sm:max-w-sm"
+                />
+              </a>
+              {message.attachment_name && (
+                <p className="mt-1 text-[10px] text-[#949ba4]">
+                  {message.attachment_name}
+                  {message.attachment_size
+                    ? ` (${Math.max(1, Math.round(message.attachment_size / 1024))} KB)`
+                    : ""}
+                </p>
+              )}
             </div>
           )}
 

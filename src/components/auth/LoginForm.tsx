@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Loader2, LogIn } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { loginAction, type AuthActionState } from "@/app/auth/actions";
 import { OAuthButtons } from "./OAuthButtons";
 import { SetupNotice } from "./SetupNotice";
 
@@ -14,63 +13,32 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ isConfigured, initialError }: LoginFormProps) {
-  const router = useRouter();
+  const [state, formAction, isPending] = useActionState<
+    AuthActionState,
+    FormData
+  >(loginAction, { error: initialError ?? null });
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState(initialError ?? "");
+  const [oauthError, setOauthError] = useState("");
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!isConfigured || isLoading) {
-      return;
-    }
-
-    setErrorMessage("");
-    setIsLoading(true);
-
-    try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-
-      if (error) {
-        setErrorMessage(
-          error.message === "Invalid login credentials"
-            ? "Email atau kata sandi salah. Silakan periksa kembali."
-            : error.message,
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      router.push("/chat");
-      router.refresh();
-    } catch (err) {
-      setErrorMessage(
-        err instanceof Error ? err.message : "Terjadi kesalahan saat masuk.",
-      );
-      setIsLoading(false);
-    }
-  }
+  const displayedError = oauthError || state.error;
 
   return (
     <div className="space-y-5">
       {!isConfigured && <SetupNotice />}
 
-      {errorMessage && (
+      {displayedError && (
         <div
           role="alert"
-          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-200"
+          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-sm leading-relaxed text-rose-200"
         >
-          {errorMessage}
+          {displayedError}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form action={formAction} className="space-y-4">
         <div className="space-y-1.5">
           <label
             htmlFor="login-email"
@@ -80,10 +48,11 @@ export function LoginForm({ isConfigured, initialError }: LoginFormProps) {
           </label>
           <input
             id="login-email"
+            name="email"
             type="email"
             autoComplete="email"
             required
-            disabled={!isConfigured || isLoading}
+            disabled={!isConfigured || isPending}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="nama@email.com"
@@ -101,10 +70,11 @@ export function LoginForm({ isConfigured, initialError }: LoginFormProps) {
           <div className="relative">
             <input
               id="login-password"
+              name="password"
               type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               required
-              disabled={!isConfigured || isLoading}
+              disabled={!isConfigured || isPending}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Masukkan kata sandi"
@@ -131,15 +101,15 @@ export function LoginForm({ isConfigured, initialError }: LoginFormProps) {
 
         <button
           type="submit"
-          disabled={!isConfigured || isLoading}
+          disabled={!isConfigured || isPending}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#5865f2] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#4752c4] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isLoading ? (
+          {isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <LogIn className="h-4 w-4" />
           )}
-          <span>{isLoading ? "Memproses..." : "Masuk"}</span>
+          <span>{isPending ? "Memproses..." : "Masuk"}</span>
         </button>
       </form>
 
@@ -151,7 +121,7 @@ export function LoginForm({ isConfigured, initialError }: LoginFormProps) {
         <div className="flex-grow border-t border-white/10" />
       </div>
 
-      <OAuthButtons isConfigured={isConfigured} onError={setErrorMessage} />
+      <OAuthButtons isConfigured={isConfigured} onError={setOauthError} />
 
       <p className="text-center text-sm text-[#b5bac1]">
         Belum punya akun?{" "}

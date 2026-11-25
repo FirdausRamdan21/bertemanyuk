@@ -1,12 +1,21 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { ChatWorkspace } from "@/components/chat/ChatWorkspace";
 import { loadChannelMessages } from "@/lib/chat-queries";
+import {
+  loadCommunityWorkspaceData,
+  loadUserCommunities,
+} from "@/lib/community-queries";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 import { buildFallbackUsername } from "@/lib/validation";
+import type { MemberWithCommunityRole } from "@/types/chat";
+import type { Channel, CommunityRole } from "@/types/database";
 
 async function ChatAppLoader() {
+  await connection();
+
   if (!isSupabaseConfigured()) {
     redirect("/login");
   }
@@ -26,7 +35,6 @@ async function ChatAppLoader() {
     .eq("id", user.id)
     .maybeSingle();
 
-  // Fallback jika akun mendaftar sebelum trigger handle_new_user dipasang
   if (!currentProfile && !profileError) {
     const meta = user.user_metadata ?? {};
     const seed =
@@ -71,16 +79,51 @@ async function ChatAppLoader() {
     );
   }
 
-  const [channelsRes, membersRes] = await Promise.all([
-    supabase.from("channels").select("*").order("name", { ascending: true }),
-    supabase.from("profiles").select("*").order("username", { ascending: true }),
-  ]);
+  const { v2Ready, communities } = await loadUserCommunities(
+    supabase,
+    currentProfile.id,
+  );
 
-  const channels = channelsRes.data ?? [];
-  const members = membersRes.data ?? [currentProfile];
+  let initialCommunityId: string | null = null;
+  let initialCommunityRoles: CommunityRole[] = [];
+  let channels: Channel[] = [];
+  let members: MemberWithCommunityRole[] = [];
+
+  if (v2Ready) {
+    const firstCommunity = communities[0] ?? null;
+    if (firstCommunity) {
+      initialCommunityId = firstCommunity.id;
+      const workspaceData = await loadCommunityWorkspaceData(
+        supabase,
+        firstCommunity.id,
+      );
+      channels = workspaceData.channels;
+      initialCommunityRoles = workspaceData.roles;
+      members = workspaceData.members;
+    } else {
+      members = [{ ...currentProfile, communityRole: null }];
+    }
+  } else {
+    // Fallback aman jika migrasi SQL v2.0 (003_v2_communities_and_rooms.sql) belum dijalankan
+    const [channelsRes, membersRes] = await Promise.all([
+      supabase.from("channels").select("*").order("name", { ascending: true }),
+      supabase
+        .from("profiles")
+        .select("*")
+        .order("username", { ascending: true }),
+    ]);
+
+    channels = channelsRes.data ?? [];
+    members = (membersRes.data ?? [currentProfile]).map((m) => ({
+      ...m,
+      communityRole: null,
+    }));
+  }
 
   const defaultChannel =
-    channels.find((c) => c.name === "general") ?? channels[0] ?? null;
+    channels.find((c) => (c.room_type ?? "chat") === "chat") ??
+    channels[0] ??
+    null;
 
   const initialChannelId = defaultChannel?.id ?? null;
 
@@ -97,6 +140,10 @@ async function ChatAppLoader() {
     <ChatWorkspace
       currentUser={currentProfile}
       userEmail={user.email ?? ""}
+      v2Ready={v2Ready}
+      communities={communities}
+      initialCommunityId={initialCommunityId}
+      initialCommunityRoles={initialCommunityRoles}
       channels={channels}
       members={members}
       initialChannelId={initialChannelId}

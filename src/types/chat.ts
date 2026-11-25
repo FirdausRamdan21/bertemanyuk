@@ -1,6 +1,19 @@
-import type { Channel, Message, Poll, PollVote, Profile } from "./database";
+import type {
+  Channel,
+  Community,
+  CommunityRole,
+  Message,
+  Poll,
+  PollVote,
+  Profile,
+} from "./database";
 
-export type MessageFilterType = "all" | "links" | "code" | "bookmarks" | "highlights";
+export type MessageFilterType =
+  | "all"
+  | "links"
+  | "code"
+  | "bookmarks"
+  | "highlights";
 
 export type TypingMode = "text" | "code" | "poll";
 
@@ -46,11 +59,19 @@ export type ChatMessage = Message & {
   highlightedBy: string | null;
 };
 
+export type MemberWithCommunityRole = Profile & {
+  communityRole: CommunityRole | null;
+};
+
 export type ChatInitialData = {
   currentUser: Profile;
   userEmail: string;
+  v2Ready: boolean;
+  communities: Community[];
+  initialCommunityId: string | null;
+  initialCommunityRoles: CommunityRole[];
   channels: Channel[];
-  members: Profile[];
+  members: MemberWithCommunityRole[];
   initialChannelId: string | null;
   initialMessages: ChatMessage[];
   phase2Ready: boolean;
