@@ -26,7 +26,6 @@ import {
   Loader2,
   Menu,
   MessageSquare,
-  Mic,
   Radio,
   RefreshCw,
   Rows3,
@@ -81,7 +80,7 @@ import { ProfileModal } from "./ProfileModal";
 import { RoomInfoPanel } from "./RoomInfoPanel";
 import { RoomSettingsModal } from "./RoomSettingsModal";
 import { TypingIndicator } from "./TypingIndicator";
-import { UserAvatar } from "./UserAvatar";
+import { VoiceRoomView } from "./VoiceRoomView";
 
 function normalizePollOptions(raw: unknown): PollOption[] {
   if (!Array.isArray(raw)) {
@@ -2084,45 +2083,19 @@ export function ChatWorkspace({
 
         {/* Konten Utama sesuai Jenis Ruang */}
         {activeRoomType === "voice" && activeChannel ? (
-          <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-300">
-              <Mic className="h-8 w-8" />
-            </div>
-            <h2 className="text-xl font-bold text-[#f2f3f5]">
-              Ruang Suara: {activeChannel.name}
-            </h2>
-            <p className="mt-1.5 max-w-md text-sm text-[#b5bac1]">
-              {activeChannel.description ??
-                "Ruang panggilan suara real-time dan pesan pendamping."}
-            </p>
-
-            <div className="mt-6 w-full max-w-md rounded-2xl border border-white/10 bg-[#2b2d31] p-4">
-              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[#949ba4]">
-                Sedang di Ruang Suara ({activeChannelViewers.length})
-              </p>
-              <div className="flex flex-wrap justify-center gap-3">
-                {activeChannelViewers.map((viewer) => (
-                  <div
-                    key={viewer.userId}
-                    className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-[#1e1f22] py-1 pr-3 pl-1.5"
-                  >
-                    <UserAvatar
-                      username={viewer.username}
-                      avatarUrl={viewer.avatarUrl}
-                      size="sm"
-                    />
-                    <span className="text-xs font-semibold text-[#f2f3f5]">
-                      @{viewer.username}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-4 text-xs text-[#949ba4]">
-                Kontrol mikrofon WebRTC &amp; pesan pendamping siap diaktifkan
-                pada <strong>Tahap 3</strong>.
-              </p>
-            </div>
-          </div>
+          <VoiceRoomView
+            key={activeChannel.id}
+            channel={activeChannel}
+            currentUser={currentUser}
+            canModerate={canModerateMessages}
+            messages={messages}
+            typingUsers={typingUsers}
+            isSending={isSending}
+            composerDisabledReason={composerDisabledReason}
+            onSendTextMessage={(text) => handleSendMessage(text, null)}
+            onDeleteMessage={(id) => void handleDeleteMessage(id)}
+            onTyping={handleBroadcastTyping}
+          />
         ) : activeRoomType === "collection" && activeChannel ? (
           <CollectionView
             collection={activeChannel}

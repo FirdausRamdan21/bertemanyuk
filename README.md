@@ -4,12 +4,13 @@ Aplikasi ruang diskusi komunitas bergaya Mini-Discord yang dibangun dengan **Nex
 
 ---
 
-## Fitur BertemanYuk v2.0 (Tahap 1 & Tahap 2)
+## Fitur BertemanYuk v2.0 (Tahap 1–3)
 
 - **Multi-Komunitas & Sistem Peran**: buat komunitas baru (otomatis mendapat 1 Ruang Obrolan + 1 Ruang Suara + peran Pemilik, Pengurus, Anggota), gabung via kode undangan, dan atur peran/hak akses kustom.
 - **Panel Informasi Ruang (5 Tab Arsip)**: Tautan, Kode, Saku Pesan, Solusi, dan galeri Media di sisi kanan ruang obrolan.
 - **Tombol "Fitur Teks" & Media ≤ 2 MB**: pop-up Spoiler, Blok Kode, Polling Cepat sebelum tombol Kirim, plus unggah 1 gambar (maks. 2 MB) ke Supabase Storage (`chat-media`).
 - **Panel Pengaturan Ruang (Umum, Akses, Anggota)** & **Ruang Koleksi Lengkap** dengan sub-kategori dan tambah ruang di dalam koleksi.
+- **Ruang Suara Real-Time (WebRTC + Supabase Broadcast)**: panggilan audio peer-to-peer tanpa server tambahan, kontrol mikrofon/bisukan diri/keluar, pilih perangkat input/output, bisukan peserta lain (lokal & moderasi Pengurus), serta panel **Pesan Pendamping** khusus teks.
 
 ## Fitur Dasar (MVP v1.0)
 
